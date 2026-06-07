@@ -11,9 +11,11 @@ Useful for debugging network protocols, monitoring incoming connections, simple 
 - **L7 protocol detection** — automatically identifies TLS, HTTP, and SSH on the first read
 - **MTU/MSS discovery** — logs interface MTU and socket MSS per connection
 - **Payload dump modes** — optional hex or hexdump payload logging for deep inspection
+- **Inter-read timing and read size statistics** — per-connection min/max/avg/first/last read sizes and inter-read delays
 - **Periodic server stats** — configurable interval for goroutine count, active connections, and throughput
 - **Graceful shutdown** — drains active connections on SIGINT/SIGTERM before exiting
 - **Zero external dependencies** — pure Go standard library
+- **CGO-free build** — optional static binary with `CGO_ENABLED=0`
 
 ## Quick Start
 
@@ -65,6 +67,7 @@ Listens on `0.0.0.0:9000` by default. Send traffic to it and watch the JSON log 
 | Target             | Description                                   |
 | ------------------ | --------------------------------------------- |
 | `make build`       | Build the binary                              |
+| `make build-nocgo` | Build with `CGO_ENABLED=0` (static binary)    |
 | `make run`         | Build and run with defaults                   |
 | `make run-verbose` | Build and run with `--verbose`                |
 | `make run-hex`     | Build and run with `--verbose --dump hex`     |
@@ -72,7 +75,9 @@ Listens on `0.0.0.0:9000` by default. Send traffic to it and watch the JSON log 
 
 ## Event Reference
 
-All log output is newline-delimited JSON (NDJSON). Each event contains at minimum:
+All log output is newline-delimited JSON (NDJSON).
+
+Each event contains at minimum:
 
 - `event`
 - `time`
@@ -133,9 +138,12 @@ A read from the connection (only emitted with `--verbose`).
     "event": "data",
     "conn_id": "tc-17a1b2c3d4e-0001",
     "dir": "read",
-    "bytes": 256
+    "bytes": 256,
+    "delta_ms": 12
 }
 ```
+
+- `delta_ms` — milliseconds since the previous read on this connection (omitted on the first read)
 
 When using `--dump hex` or `--dump hexdump`, a `payload` field is included.
 
@@ -162,9 +170,27 @@ Connection fully closed with transfer statistics.
     "dst": "0.0.0.0:9000",
     "bytes_read": 1024,
     "bytes_written": 0,
-    "duration_ms": 5000
+    "duration_ms": 5000,
+    "read_count": 42,
+    "avg_read_size": 24,
+    "min_read_size": 1,
+    "max_read_size": 1460,
+    "first_read_size": 512,
+    "last_read_size": 128,
+    "avg_inter_read_ms": 119,
+    "min_inter_read_ms": 2,
+    "max_inter_read_ms": 5000
 }
 ```
+
+Field descriptions:
+
+- `read_count` — total number of reads performed on this connection
+- `avg_read_size` — average bytes per read
+- `min_read_size` / `max_read_size` — smallest and largest read size
+- `first_read_size` / `last_read_size` — size of the first and last read
+- `avg_inter_read_ms` — average milliseconds between reads (omitted if fewer than 2 reads)
+- `min_inter_read_ms` / `max_inter_read_ms` — minimum and maximum inter-read delay
 
 ### `stats`
 
@@ -201,14 +227,14 @@ Server shutdown lifecycle events.
 
 ## Project Structure
 
-| File          | Purpose                                       |
-| ------------- | --------------------------------------------- |
-| `main.go`     | Entry point, signal handling, and accept loop |
-| `config.go`   | CLI flag parsing                              |
-| `conn.go`     | Per-connection read loop and MTU probing      |
-| `connid.go`   | Unique connection ID generator                |
-| `events.go`   | JSON event type definitions                   |
-| `logger.go`   | JSON-structured log output                    |
-| `protocol.go` | L7 protocol detection logic                   |
-| `stats.go`    | Global server statistics counters             |
-| `Makefile`    | Build and run convenience targets             |
+| File          | Purpose                                               |
+| ------------- | ----------------------------------------------------- |
+| `main.go`     | Entry point, signal handling, and accept loop         |
+| `config.go`   | CLI flag parsing                                      |
+| `conn.go`     | Per-connection read loop, MTU probing, and statistics |
+| `connid.go`   | Unique connection ID generator                        |
+| `events.go`   | JSON event type definitions                           |
+| `logger.go`   | JSON-structured log output                            |
+| `protocol.go` | L7 protocol detection logic                           |
+| `stats.go`    | Global server statistics counters                     |
+| `Makefile`    | Build and run convenience targets                     |
