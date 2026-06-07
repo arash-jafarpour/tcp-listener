@@ -1,5 +1,8 @@
 build:
 	@go build -o tcp-listener
+	
+build-nocgo:
+	@CGO_ENABLED=0 go build -o tcp-listener-nocgo .
 
 run: build
 	@./tcp-listener

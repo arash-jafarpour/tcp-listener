@@ -22,6 +22,15 @@ type ConnTracker struct {
 	DisconnectedAt   time.Time
 	BytesRead        atomic.Uint64
 	BytesWritten     atomic.Uint64
+	LastReadAt       time.Time
+	ReadCount        int64
+	MinReadSize      int
+	MaxReadSize      int
+	FirstReadSize    int
+	LastReadSize     int
+	TotalReadDelta   time.Duration
+	MinReadDelta     time.Duration
+	MaxReadDelta     time.Duration
 	conn             *net.TCPConn
 	cfg              *Config
 	ifaceMTU         int
@@ -138,35 +147,47 @@ func (t *ConnTracker) logClose(err error) {
 	t.DisconnectedAt = time.Now()
 
 	var errStr string
-
 	if err != nil && err != io.EOF {
 		errStr = err.Error()
 	}
 
 	ServerStats.ActiveConnections.Add(-1)
 
+	avgReadSize := 0
+	if t.ReadCount > 0 {
+		avgReadSize = int(t.BytesRead.Load() / uint64(t.ReadCount))
+	}
+
+	avgReadDeltaMS := int64(0)
+	if t.ReadCount > 1 {
+		avgReadDeltaMS = (t.TotalReadDelta /
+			time.Duration(t.ReadCount-1)).
+			Milliseconds()
+	}
+
 	Log(CloseEvent{
-		Event: "close",
-
-		ConnID: t.ID,
-
-		Src: t.RemoteIP + ":" + strconv.Itoa(t.RemotePort),
-		Dst: t.LocalIP + ":" + strconv.Itoa(t.LocalPort),
-
-		BytesRead:    t.BytesRead.Load(),
-		BytesWritten: t.BytesWritten.Load(),
-
-		DurationMS: t.DisconnectedAt.
-			Sub(t.ConnectedAt).
-			Milliseconds(),
-
-		Error: errStr,
-
-		Time: t.DisconnectedAt.Format(time.RFC3339Nano),
+		Event:          "close",
+		ConnID:         t.ID,
+		Src:            t.RemoteIP + ":" + strconv.Itoa(t.RemotePort),
+		Dst:            t.LocalIP + ":" + strconv.Itoa(t.LocalPort),
+		BytesRead:      t.BytesRead.Load(),
+		BytesWritten:   t.BytesWritten.Load(),
+		DurationMS:     t.DisconnectedAt.Sub(t.ConnectedAt).Milliseconds(),
+		ReadCount:      t.ReadCount,
+		AvgReadSize:    avgReadSize,
+		MinReadSize:    t.MinReadSize,
+		MaxReadSize:    t.MaxReadSize,
+		FirstReadSize:  t.FirstReadSize,
+		LastReadSize:   t.LastReadSize,
+		AvgReadDeltaMS: avgReadDeltaMS,
+		MinReadDeltaMS: t.MinReadDelta.Milliseconds(),
+		MaxReadDeltaMS: t.MaxReadDelta.Milliseconds(),
+		Error:          errStr,
+		Time:           t.DisconnectedAt.Format(time.RFC3339Nano),
 	})
 }
 
-func (t *ConnTracker) logData(dir string, n int, buf []byte) {
+func (t *ConnTracker) logData(dir string, n int, buf []byte, delta time.Duration) {
 	if !t.cfg.Verbose && t.cfg.DumpMode == "none" {
 		return
 	}
@@ -179,11 +200,13 @@ func (t *ConnTracker) logData(dir string, n int, buf []byte) {
 		Time:   time.Now().Format(time.RFC3339Nano),
 	}
 
-	switch t.cfg.DumpMode {
+	if delta > 0 {
+		ev.DeltaMS = delta.Milliseconds()
+	}
 
+	switch t.cfg.DumpMode {
 	case "hex":
 		ev.Hex = hex.EncodeToString(buf[:n])
-
 	case "hexdump":
 		ev.Hexdump = hex.Dump(buf[:n])
 	}
@@ -217,23 +240,58 @@ func (t *ConnTracker) readLoop() {
 	for {
 		n, err := t.conn.Read(buf)
 		if n > 0 {
+			now := time.Now()
+
+			var delta time.Duration
+
+			if t.ReadCount > 0 {
+				delta = now.Sub(t.LastReadAt)
+
+				t.TotalReadDelta += delta
+
+				if t.ReadCount == 1 {
+					t.MinReadDelta = delta
+					t.MaxReadDelta = delta
+				} else {
+					if delta < t.MinReadDelta {
+						t.MinReadDelta = delta
+					}
+					if delta > t.MaxReadDelta {
+						t.MaxReadDelta = delta
+					}
+				}
+			}
+
+			t.LastReadAt = now
+			t.ReadCount++
+			t.LastReadSize = n
+
+			if t.ReadCount == 1 {
+				t.FirstReadSize = n
+				t.MinReadSize = n
+				t.MaxReadSize = n
+			} else {
+				if n < t.MinReadSize {
+					t.MinReadSize = n
+				}
+				if n > t.MaxReadSize {
+					t.MaxReadSize = n
+				}
+			}
 			if !t.protocolDetected.Load() {
-
 				proto := DetectProtocol(buf[:n])
-
 				Log(ProtocolEvent{
 					Event:    "protocol",
 					ConnID:   t.ID,
 					Protocol: proto,
 					Time:     time.Now().Format(time.RFC3339Nano),
 				})
-
 				t.protocolDetected.Store(true)
 			}
 
 			t.BytesRead.Add(uint64(n))
 			ServerStats.BytesRead.Add(uint64(n))
-			t.logData("read", n, buf)
+			t.logData("read", n, buf, delta)
 		}
 		if err == io.EOF {
 			t.logEOF()
