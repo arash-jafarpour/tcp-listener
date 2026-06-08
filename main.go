@@ -92,12 +92,15 @@ func main() {
 
 			tracker := NewConnTracker(tcpConn, &cfg)
 
-			wg.Add(1)
-
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				tracker.Handle()
-			}()
+			})
+			// wg.Add(1)
+			//
+			// go func() {
+			// 	defer wg.Done()
+			// 	tracker.Handle()
+			// }()
 		}
 	}()
 

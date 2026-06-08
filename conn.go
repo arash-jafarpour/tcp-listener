@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"errors"
 	"io"
 	"net"
 	"strconv"
@@ -183,6 +184,7 @@ func (t *ConnTracker) logClose(err error) {
 		MinReadDeltaMS: t.MinReadDelta.Milliseconds(),
 		MaxReadDeltaMS: t.MaxReadDelta.Milliseconds(),
 		Error:          errStr,
+		CloseReason:    closeReason(err),
 		Time:           t.DisconnectedAt.Format(time.RFC3339Nano),
 	})
 }
@@ -306,4 +308,21 @@ func (t *ConnTracker) readLoop() {
 			return
 		}
 	}
+}
+
+func closeReason(err error) string {
+	if err == nil || err == io.EOF {
+		return "eof"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout"
+	}
+	if errors.Is(err, syscall.ECONNRESET) {
+		return "connection_reset_by_peer"
+	}
+	if errors.Is(err, syscall.EPIPE) {
+		return "broken_pipe"
+	}
+	return ""
 }

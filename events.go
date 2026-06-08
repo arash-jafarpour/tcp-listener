@@ -41,6 +41,7 @@ type CloseEvent struct {
 	MinReadDeltaMS int64  `json:"min_inter_read_ms,omitempty"`
 	MaxReadDeltaMS int64  `json:"max_inter_read_ms,omitempty"`
 	Error          string `json:"error,omitempty"`
+	CloseReason    string `json:"close_reason,omitempty"`
 	Time           string `json:"time"`
 }
 
