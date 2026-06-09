@@ -5,13 +5,13 @@ build-nocgo:
 	@CGO_ENABLED=0 go build -o tcp-listener-nocgo .
 
 run: build
-	@./tcp-listener
+	@./tcp-listener listen
 
 run-verbose: build
-	@./tcp-listener --verbose
+	@./tcp-listener listen --verbose
 
 run-hex: build
-	@./tcp-listener --verbose --dump hex
+	@./tcp-listener listen --verbose --dump hex
 
 run-hexdump: build
-	@./tcp-listener --verbose --dump hexdump
+	@./tcp-listener listen --verbose --dump hexdump

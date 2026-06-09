@@ -6,27 +6,35 @@ Useful for debugging network protocols, monitoring incoming connections, simple 
 
 ## Features
 
-- **JSON-structured logging** — machine-parseable log output for every connection event
-- **Connection lifecycle tracking** — open, data, protocol, EOF, and close events with timestamps
+- **Subcommand-based CLI** — `tcp-listener listen` and `tcp-listener analyze <logfile>`
+- **JSON-structured logging** — machine-parseable NDJSON log output for every connection event
+- **Connection lifecycle tracking** — open, data, protocol, EOF, error, and close events with nanosecond timestamps
 - **L7 protocol detection** — automatically identifies TLS, HTTP, and SSH on the first read
-- **MTU/MSS discovery** — logs interface MTU and socket MSS per connection
+- **MTU/MSS discovery** — logs interface MTU and socket MSS per connection via syscalls
 - **Payload dump modes** — optional hex or hexdump payload logging for deep inspection
 - **Inter-read timing and read size statistics** — per-connection min/max/avg/first/last read sizes and inter-read delays
 - **Periodic server stats** — configurable interval for goroutine count, active connections, and throughput
 - **Graceful shutdown** — drains active connections on SIGINT/SIGTERM before exiting
+- **Built-in log analyzer** — post-hoc analysis with protocol distribution, close reasons, and duration percentiles
 - **Zero external dependencies** — pure Go standard library
-- **CGO-free build** — optional static binary with `CGO_ENABLED=0`
 
 ## Quick Start
 
 ```bash
 go build -o tcp-listener
-./tcp-listener
+./tcp-listener listen
 ```
 
 Listens on `0.0.0.0:9000` by default. Send traffic to it and watch the JSON log output.
 
 ## Usage
+
+```text
+tcp-listener listen [flags]
+tcp-listener analyze <logfile>
+```
+
+### Flags (`listen`)
 
 ```text
 --bind string          address to bind (default "0.0.0.0")
@@ -41,25 +49,31 @@ Listens on `0.0.0.0:9000` by default. Send traffic to it and watch the JSON log 
 ### Verbose logging with hex payload dump
 
 ```bash
-./tcp-listener --verbose --dump hex
+tcp-listener listen --verbose --dump hex
 ```
 
 ### Multi-line hexdump view
 
 ```bash
-./tcp-listener --verbose --dump hexdump
+tcp-listener listen --verbose --dump hexdump
 ```
 
 ### Custom bind address and port
 
 ```bash
-./tcp-listener --bind 127.0.0.1 --port 8080
+tcp-listener listen --bind 127.0.0.1 --port 8080
 ```
 
 ### Periodic stats every 30 seconds
 
 ```bash
-./tcp-listener --stats-interval 30s
+tcp-listener listen --stats-interval 30s
+```
+
+### Analyze a session log
+
+```bash
+tcp-listener analyze logs/2026-06-09_150645.log
 ```
 
 ## Makefile
@@ -67,7 +81,7 @@ Listens on `0.0.0.0:9000` by default. Send traffic to it and watch the JSON log 
 | Target             | Description                                   |
 | ------------------ | --------------------------------------------- |
 | `make build`       | Build the binary                              |
-| `make build-nocgo` | Build with `CGO_ENABLED=0` (static binary)    |
+| `make build-nocgo` | Build with `CGO_ENABLED=0`                    |
 | `make run`         | Build and run with defaults                   |
 | `make run-verbose` | Build and run with `--verbose`                |
 | `make run-hex`     | Build and run with `--verbose --dump hex`     |
@@ -80,7 +94,7 @@ All log output is newline-delimited JSON (NDJSON).
 Each event contains at minimum:
 
 - `event`
-- `time`
+- `time` (RFC3339Nano format)
 
 ### `start`
 
@@ -91,7 +105,8 @@ Server started and begins accepting connections.
     "event": "start",
     "bind": "0.0.0.0:9000",
     "verbose": false,
-    "dump_mode": "none"
+    "dump_mode": "none",
+    "session_file": "logs/2026-06-09_150405.log"
 }
 ```
 
@@ -106,7 +121,8 @@ A new TCP connection was accepted.
     "src": "192.168.1.5:54321",
     "dst": "0.0.0.0:9000",
     "iface_mtu": 1500,
-    "socket_mss": 1460
+    "socket_mss": 1460,
+    "time": "2026-06-09T15:04:05.123456789Z"
 }
 ```
 
@@ -118,7 +134,8 @@ L7 protocol detected from the first data chunk.
 {
     "event": "protocol",
     "conn_id": "tc-17a1b2c3d4e-0001",
-    "protocol": "http"
+    "protocol": "http",
+    "time": "2026-06-09T15:04:05.123456789Z"
 }
 ```
 
@@ -131,7 +148,7 @@ Detected protocols:
 
 ### `data`
 
-A read from the connection (only emitted with `--verbose`).
+A read from the connection (only emitted with `--verbose` or a dump mode).
 
 ```json
 {
@@ -139,22 +156,37 @@ A read from the connection (only emitted with `--verbose`).
     "conn_id": "tc-17a1b2c3d4e-0001",
     "dir": "read",
     "bytes": 256,
-    "delta_ms": 12
+    "delta_ms": 12,
+    "time": "2026-06-09T15:04:05.123456789Z"
 }
 ```
 
 - `delta_ms` — milliseconds since the previous read on this connection (omitted on the first read)
 
-When using `--dump hex` or `--dump hexdump`, a `payload` field is included.
+When using `--dump hex` or `--dump hexdump`, a `hex` or `hexdump` field is included respectively.
 
 ### `eof`
 
-Remote side closed the connection.
+Remote side closed the connection cleanly.
 
 ```json
 {
     "event": "eof",
-    "conn_id": "tc-17a1b2c3d4e-0001"
+    "conn_id": "tc-17a1b2c3d4e-0001",
+    "time": "2026-06-09T15:04:05.123456789Z"
+}
+```
+
+### `error`
+
+Unexpected read error occurred on the connection.
+
+```json
+{
+    "event": "error",
+    "conn_id": "tc-17a1b2c3d4e-0001",
+    "error": "read: connection reset by peer",
+    "time": "2026-06-09T15:04:05.123456789Z"
 }
 ```
 
@@ -180,11 +212,12 @@ Connection fully closed with transfer statistics.
     "avg_inter_read_ms": 119,
     "min_inter_read_ms": 2,
     "max_inter_read_ms": 5000,
-    "close_reason": "eof"
+    "close_reason": "eof",
+    "time": "2026-06-09T15:04:05.123456789Z"
 }
 ```
 
-Field descriptions:
+#### Field Descriptions
 
 - `read_count` — total number of reads performed on this connection
 - `avg_read_size` — average bytes per read
@@ -193,7 +226,17 @@ Field descriptions:
 - `avg_inter_read_ms` — average milliseconds between reads (omitted if fewer than 2 reads)
 - `min_inter_read_ms` / `max_inter_read_ms` — minimum and maximum inter-read delay
 - `error` — raw error string for abnormal closes (omitted on clean EOF)
-- `close_reason` — standardized close category (see table below)
+- `close_reason` — standardized close category
+
+#### Close Reasons
+
+| Reason                     | Description                  |
+| -------------------------- | ---------------------------- |
+| `eof`                      | Remote side closed cleanly   |
+| `timeout`                  | I/O timeout                  |
+| `connection_reset_by_peer` | TCP RST received             |
+| `broken_pipe`              | Write to a closed connection |
+| _(empty)_                  | Other or unexpected error    |
 
 ### `stats`
 
@@ -228,16 +271,81 @@ Server shutdown lifecycle events.
 }
 ```
 
-## Project Structure
+### `accept_error`
 
-| File          | Purpose                                               |
-| ------------- | ----------------------------------------------------- |
-| `main.go`     | Entry point, signal handling, and accept loop         |
-| `config.go`   | CLI flag parsing                                      |
-| `conn.go`     | Per-connection read loop, MTU probing, and statistics |
-| `connid.go`   | Unique connection ID generator                        |
-| `events.go`   | JSON event type definitions                           |
-| `logger.go`   | JSON-structured log output                            |
-| `protocol.go` | L7 protocol detection logic                           |
-| `stats.go`    | Global server statistics counters                     |
-| `Makefile`    | Build and run convenience targets                     |
+Error accepting a new connection.
+
+```json
+{
+    "event": "accept_error",
+    "error": "accept: too many open files"
+}
+```
+
+### `listener_error`
+
+Error closing the listener during shutdown.
+
+```json
+{
+    "event": "listener_error",
+    "error": "close: use of closed network connection"
+}
+```
+
+### `unexpected_conn_type`
+
+Received a non-TCP connection from the listener.
+
+```json
+{
+    "event": "unexpected_conn_type",
+    "type": "*net.UDPConn"
+}
+```
+
+## Log Analyzer
+
+The `analyze` subcommand processes a session log file and prints a summary report.
+
+### Example Output
+
+```text
+Lines Processed: 1520
+
+Summary
+-------
+Connections: 12
+Bytes Read: 87432
+
+Protocols
+-------
+tls                      8
+http                     3
+unknown                  1
+
+Close Reasons
+-------
+eof                      10
+connection_reset_by_peer 2
+
+MSS Distribution
+-------
+1460                     10
+1440                     2
+
+Top Payload Sizes
+-----------------
+1024                     45
+512                      32
+1460                     28
+256                      18
+
+Connection Durations
+--------------------
+Min: 12 ms
+Avg: 4502 ms
+P50: 3200 ms
+P95: 15000 ms
+Max: 60000 ms
+```
