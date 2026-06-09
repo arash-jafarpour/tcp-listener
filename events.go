@@ -59,10 +59,11 @@ type ErrorEvent struct {
 }
 
 type StartEvent struct {
-	Event    string `json:"event"`
-	Bind     string `json:"bind"`
-	Verbose  bool   `json:"verbose"`
-	DumpMode string `json:"dump_mode"`
+	Event       string `json:"event"`
+	Bind        string `json:"bind"`
+	Verbose     bool   `json:"verbose"`
+	DumpMode    string `json:"dump_mode"`
+	SessionFile string `json:"session_file,omitempty"`
 }
 
 type ShutdownEvent struct {
@@ -99,4 +100,8 @@ type StatsEvent struct {
 	BytesRead         uint64 `json:"bytes_read"`
 	BytesWritten      uint64 `json:"bytes_written"`
 	Goroutines        int    `json:"goroutines"`
+}
+
+type EventHeader struct {
+	Event string `json:"event"`
 }

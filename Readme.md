@@ -179,7 +179,8 @@ Connection fully closed with transfer statistics.
     "last_read_size": 128,
     "avg_inter_read_ms": 119,
     "min_inter_read_ms": 2,
-    "max_inter_read_ms": 5000
+    "max_inter_read_ms": 5000,
+    "close_reason": "eof"
 }
 ```
 
@@ -191,6 +192,8 @@ Field descriptions:
 - `first_read_size` / `last_read_size` — size of the first and last read
 - `avg_inter_read_ms` — average milliseconds between reads (omitted if fewer than 2 reads)
 - `min_inter_read_ms` / `max_inter_read_ms` — minimum and maximum inter-read delay
+- `error` — raw error string for abnormal closes (omitted on clean EOF)
+- `close_reason` — standardized close category (see table below)
 
 ### `stats`
 

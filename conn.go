@@ -129,7 +129,7 @@ func (t *ConnTracker) socketInfo() (mtu, mss int) {
 }
 
 func (t *ConnTracker) logOpen() {
-	Log(OpenEvent{
+	AppLogger.Log(OpenEvent{
 		Event: "open",
 
 		ConnID: t.ID,
@@ -166,7 +166,7 @@ func (t *ConnTracker) logClose(err error) {
 			Milliseconds()
 	}
 
-	Log(CloseEvent{
+	AppLogger.Log(CloseEvent{
 		Event:          "close",
 		ConnID:         t.ID,
 		Src:            t.RemoteIP + ":" + strconv.Itoa(t.RemotePort),
@@ -213,11 +213,11 @@ func (t *ConnTracker) logData(dir string, n int, buf []byte, delta time.Duration
 		ev.Hexdump = hex.Dump(buf[:n])
 	}
 
-	Log(ev)
+	AppLogger.Log(ev)
 }
 
 func (t *ConnTracker) logEOF() {
-	Log(EOFEvent{
+	AppLogger.Log(EOFEvent{
 		Event:  "eof",
 		ConnID: t.ID,
 		Time:   time.Now().Format(time.RFC3339Nano),
@@ -225,7 +225,7 @@ func (t *ConnTracker) logEOF() {
 }
 
 func (t *ConnTracker) logError(err error) {
-	Log(ErrorEvent{
+	AppLogger.Log(ErrorEvent{
 		Event:  "error",
 		ConnID: t.ID,
 		Error:  err.Error(),
@@ -282,7 +282,7 @@ func (t *ConnTracker) readLoop() {
 			}
 			if !t.protocolDetected.Load() {
 				proto := DetectProtocol(buf[:n])
-				Log(ProtocolEvent{
+				AppLogger.Log(ProtocolEvent{
 					Event:    "protocol",
 					ConnID:   t.ID,
 					Protocol: proto,
